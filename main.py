@@ -49,7 +49,7 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         self.weights_dir = './weights'
         self.detector = None
         self.post_processor = PostProcessor()
-        self.video_processor = VideoProcessor()
+        self.feed_video_processors = [VideoProcessor() for _ in range(8)]
         
         # 使用信号量控制推理（只允许一个线程推理）
         self.infer_semaphore = threading.Semaphore(1)
@@ -138,10 +138,6 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         self.btn_stop_all.setGeometry(QtCore.QRect(155, 244, 135, 28))
         self.btn_stop_all.clicked.connect(self.stop_all_feeds)
 
-        self.cb_enable_enhancement = QtWidgets.QCheckBox("启用图像增强", self.left_panel)
-        self.cb_enable_enhancement.setGeometry(QtCore.QRect(10, 280, 180, 24))
-        self.cb_enable_enhancement.stateChanged.connect(self.toggle_enhancement)
-
         self.label_5 = QtWidgets.QLabel("结果统计", self.left_panel)
         self.label_5.setGeometry(QtCore.QRect(10, 310, 120, 24))
         self.le_res = QtWidgets.QTextEdit(self.left_panel)
@@ -192,6 +188,8 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         self.grid_scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
         self.grid_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
 
+        self.feed_enhance_checkboxes = [None] * 8
+
         for idx in range(8):
             card = QtWidgets.QFrame(self.grid_container)
             card.setFrameShape(QtWidgets.QFrame.StyledPanel)
@@ -207,24 +205,9 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
             picture.setScaledContents(True)
             picture.setText("等待输入")
 
-            progress_bar = QProgressBar()
-            progress_bar.setMinimum(0)
-            progress_bar.setMaximum(100)
-            progress_bar.setValue(0)
-            progress_bar.setStyleSheet("""
-                QProgressBar {
-                    border: 1px solid #ccc;
-                    border-radius: 3px;
-                    background-color: #f0f0f0;
-                    height: 18px;
-                }
-                QProgressBar::chunk {
-                    background-color: #0066cc;
-                    border-radius: 3px;
-                }
-            """)
-            progress_bar.setVisible(False)
-            self.feed_progress_bars[idx] = progress_bar
+            cb_enhance = QtWidgets.QCheckBox("启用图像增强")
+            cb_enhance.stateChanged.connect(lambda state, i=idx: self.toggle_feed_enhancement(i, state))
+            self.feed_enhance_checkboxes[idx] = cb_enhance
 
             row_btn = QtWidgets.QHBoxLayout()
             btn_img = QtWidgets.QPushButton("图片")
@@ -245,7 +228,7 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
             btn_select.clicked.connect(lambda _, i=idx: self.set_active_feed(i))
 
             vbox.addWidget(picture, 1)
-            vbox.addWidget(progress_bar)
+            vbox.addWidget(cb_enhance)
             vbox.addLayout(row_btn)
 
             self.feed_panels.append({
@@ -496,7 +479,7 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         frame_rate_controller = FrameRateController(target_fps=30)
         try:
             self.signal.emit(feed_id, '正在检测视频中...', 'status')
-            info = self.video_processor.get_video_info(video_file)
+            info = self.feed_video_processors[feed_id].get_video_info(video_file)
             if info:
                 frame_rate_controller.set_fps(info.get('fps', 30))
             
@@ -569,7 +552,7 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
     def _process_and_render_frame(self, feed_id, frame):
         """处理并渲染帧 - 使用信号量控制推理"""
         try:
-            frame = self.video_processor.process_frame(frame)
+            frame = self.feed_video_processors[feed_id].process_frame(frame)
             
             infer_start = time.perf_counter()
             
@@ -790,14 +773,15 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         self.update_record_count()
         QMessageBox.information(self, "成功", "检测记录已清空!")
 
-    def toggle_enhancement(self, state):
+    def toggle_feed_enhancement(self, feed_id, state):
         on = state == QtCore.Qt.Checked
-        self.video_processor.enable_enhancement = on
+        vp = self.feed_video_processors[feed_id]
+        vp.enable_enhancement = on
         if on:
-            self.video_processor.set_enhancement_params(
+            vp.set_enhancement_params(
                 brightness=1.42, contrast=1.18, saturation=1.08)
         else:
-            self.video_processor.set_enhancement_params(
+            vp.set_enhancement_params(
                 brightness=1.0, contrast=1.0, saturation=1.0)
         self._save_config()
 
@@ -858,11 +842,15 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
             conf = self.config_manager.get('confidence', 0.45)
             iou = self.config_manager.get('iou', 0.45)
             weights = self.config_manager.get('weights', '')
-            enhancement = self.config_manager.get('enhancement', False)
+            feed_enhancements = self.config_manager.get('feed_enhancements', [False] * 8)
+            if not isinstance(feed_enhancements, list):
+                feed_enhancements = [False] * 8
+            feed_enhancements = (list(feed_enhancements) + [False] * 8)[:8]
             
             self.dsb_conf.setValue(conf)
             self.dsb_iou.setValue(iou)
-            self.cb_enable_enhancement.setChecked(enhancement)
+            for i, checked in enumerate(feed_enhancements):
+                self.feed_enhance_checkboxes[i].setChecked(bool(checked))
             
             if weights and weights in [self.cb_weights.itemText(i) for i in range(self.cb_weights.count())]:
                 self.cb_weights.setCurrentText(weights)
@@ -877,7 +865,7 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
                 'confidence': self.dsb_conf.value(),
                 'iou': self.dsb_iou.value(),
                 'weights': self.cb_weights.currentText(),
-                'enhancement': self.cb_enable_enhancement.isChecked()
+                'feed_enhancements': [cb.isChecked() for cb in self.feed_enhance_checkboxes]
             })
         except Exception as e:
             self.logger.warning(f"参数保存失败: {e}")
