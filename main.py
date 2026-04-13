@@ -565,7 +565,9 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
             else:
                 self.feed_last_alarm_dict[feed_id] = None
             
-            self.post_processor.add_detection(result_lists, frame_id=self.feed_current_frame_id[feed_id])
+            # ✅ 传入 feed_id
+            self.post_processor.add_detection(result_lists, frame_id=self.feed_current_frame_id[feed_id],
+                                             feed_id=feed_id)
             self.feed_latest_frames[feed_id] = frame.copy()
             summary = self.get_result_str(feed_id, result_lists)
             self.feed_last_summary[feed_id] = summary
