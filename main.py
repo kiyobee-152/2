@@ -13,7 +13,7 @@ import numpy as np
 from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtCore import pyqtSignal, Qt
 from PyQt5.QtGui import QImage, QPixmap
-from PyQt5.QtWidgets import QApplication, QFileDialog, QLabel, QMessageBox, QProgressBar
+from PyQt5.QtWidgets import QApplication, QFileDialog, QLabel, QMessageBox
 
 import image_rc
 from model_interface import create_detector
@@ -28,7 +28,7 @@ from detection_browser import DetectionBrowser
 
 
 class FeedPreviewLabel(QtWidgets.QLabel):
-    """高��辨率帧预览标签"""
+    """高辨率帧预览标签"""
     def minimumSizeHint(self):
         return QtCore.QSize(300, 150)
     def sizeHint(self):
@@ -37,8 +37,6 @@ class FeedPreviewLabel(QtWidgets.QLabel):
 
 class Ui_MainWindow(QtWidgets.QMainWindow):
     signal = pyqtSignal(int, str, str)
-    # 进度条必须在主线程更新：(feed_id, visible, value, maximum)
-    feed_progress_signal = pyqtSignal(int, bool, int, int)
 
     def setupUi(self):
         self.setObjectName("MainWindow")
@@ -49,7 +47,8 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         self.weights_dir = './weights'
         self.detector = None
         self.post_processor = PostProcessor()
-        self.video_processor = VideoProcessor()
+        # 创建 8 个独立的 VideoProcessor 实例
+        self.feed_video_processors = [VideoProcessor() for _ in range(8)]
         
         # 使用信号量控制推理（只允许一个线程推理）
         self.infer_semaphore = threading.Semaphore(1)
@@ -63,7 +62,6 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         
         self.statistics_window = None
         self.browser_window = None
-        self.feed_progress_bars = [None] * 8
         self.feed_frame_counts = [0] * 8
         self.feed_total_frames = [0] * 8
 
@@ -138,10 +136,6 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         self.btn_stop_all.setGeometry(QtCore.QRect(155, 244, 135, 28))
         self.btn_stop_all.clicked.connect(self.stop_all_feeds)
 
-        self.cb_enable_enhancement = QtWidgets.QCheckBox("启用图像增强", self.left_panel)
-        self.cb_enable_enhancement.setGeometry(QtCore.QRect(10, 280, 180, 24))
-        self.cb_enable_enhancement.stateChanged.connect(self.toggle_enhancement)
-
         self.label_5 = QtWidgets.QLabel("结果统计", self.left_panel)
         self.label_5.setGeometry(QtCore.QRect(10, 310, 120, 24))
         self.le_res = QtWidgets.QTextEdit(self.left_panel)
@@ -192,6 +186,9 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         self.grid_scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
         self.grid_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
 
+        # 为 8 个画面分别创建增强复选框
+        self.feed_enhance_checkboxes = [None] * 8
+
         for idx in range(8):
             card = QtWidgets.QFrame(self.grid_container)
             card.setFrameShape(QtWidgets.QFrame.StyledPanel)
@@ -207,24 +204,10 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
             picture.setScaledContents(True)
             picture.setText("等待输入")
 
-            progress_bar = QProgressBar()
-            progress_bar.setMinimum(0)
-            progress_bar.setMaximum(100)
-            progress_bar.setValue(0)
-            progress_bar.setStyleSheet("""
-                QProgressBar {
-                    border: 1px solid #ccc;
-                    border-radius: 3px;
-                    background-color: #f0f0f0;
-                    height: 18px;
-                }
-                QProgressBar::chunk {
-                    background-color: #0066cc;
-                    border-radius: 3px;
-                }
-            """)
-            progress_bar.setVisible(False)
-            self.feed_progress_bars[idx] = progress_bar
+            # 为每个画面添加独立的"启用图像增强"复选框
+            cb_enhance = QtWidgets.QCheckBox("启用图像增强")
+            cb_enhance.stateChanged.connect(lambda state, i=idx: self.toggle_feed_enhancement(i, state))
+            self.feed_enhance_checkboxes[idx] = cb_enhance
 
             row_btn = QtWidgets.QHBoxLayout()
             btn_img = QtWidgets.QPushButton("图片")
@@ -245,7 +228,7 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
             btn_select.clicked.connect(lambda _, i=idx: self.set_active_feed(i))
 
             vbox.addWidget(picture, 1)
-            vbox.addWidget(progress_bar)
+            vbox.addWidget(cb_enhance)
             vbox.addLayout(row_btn)
 
             self.feed_panels.append({
@@ -382,8 +365,6 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
 
     def init_all(self):
         self.signal.connect(self.set_res, QtCore.Qt.QueuedConnection)
-        self.feed_progress_signal.connect(
-            self._apply_feed_progress, QtCore.Qt.QueuedConnection)
         self.load_weights_to_list()
         if self.cb_weights.count() > 0:
             self.cb_weights_changed()
@@ -458,7 +439,6 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         frame_rate_controller = FrameRateController(target_fps=30)
         try:
             self.signal.emit(feed_id, '正在检测摄像头中...', 'status')
-            self.feed_progress_signal.emit(feed_id, False, 0, 100)
             cap = cv2.VideoCapture(camera_index)
             
             if not cap.isOpened():
@@ -489,14 +469,14 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
                 except:
                     pass
             self.feed_running_flags[feed_id] = False
-            self.feed_progress_signal.emit(feed_id, False, 0, 100)
 
     def start_video(self, feed_id, video_file):
         cap = None
         frame_rate_controller = FrameRateController(target_fps=30)
         try:
             self.signal.emit(feed_id, '正在检测视频中...', 'status')
-            info = self.video_processor.get_video_info(video_file)
+            # 使用 feed_id 对应的 VideoProcessor 获取视频信息
+            info = self.feed_video_processors[feed_id].get_video_info(video_file)
             if info:
                 frame_rate_controller.set_fps(info.get('fps', 30))
             
@@ -507,8 +487,6 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             self.feed_total_frames[feed_id] = total_frames
             self.feed_frame_counts[feed_id] = 0
-            
-            self.feed_progress_signal.emit(feed_id, True, 0, 100)
             
             self.feed_current_frame_id[feed_id] = 0
             while self.feed_running_flags[feed_id]:
@@ -525,16 +503,11 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
                 self.feed_current_frame_id[feed_id] += 1
                 self.feed_frame_counts[feed_id] += 1
                 
-                progress_value = int(
-                    (self.feed_frame_counts[feed_id] / max(total_frames, 1)) * 100)
-                progress_value = min(100, max(0, progress_value))
-                self.feed_progress_signal.emit(feed_id, True, progress_value, 100)
-                
                 fps = info.get('fps', 30) if info else 30
                 remaining_frames = total_frames - self.feed_frame_counts[feed_id]
                 remaining_seconds = remaining_frames / fps if fps > 0 else 0
                 
-                self.signal.emit(feed_id, f"进度: {progress_value}% | 剩余: {int(remaining_seconds)}秒", 'progress')
+                self.signal.emit(feed_id, f"处理中 | 剩余: {int(remaining_seconds)}秒", 'progress')
                 
                 frame_rate_controller.wait_if_needed()
             
@@ -549,7 +522,6 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
                 except:
                     pass
             self.feed_running_flags[feed_id] = False
-            self.feed_progress_signal.emit(feed_id, False, 0, 100)
 
     def start_image(self, feed_id, image_path):
         try:
@@ -569,7 +541,8 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
     def _process_and_render_frame(self, feed_id, frame):
         """处理并渲染帧 - 使用信号量控制推理"""
         try:
-            frame = self.video_processor.process_frame(frame)
+            # 使用 feed_id 对应的 VideoProcessor 处理帧
+            frame = self.feed_video_processors[feed_id].process_frame(frame)
             
             infer_start = time.perf_counter()
             
@@ -626,14 +599,6 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
 
     def refresh_result_for_feed(self, feed_id):
         self.le_res.setPlainText(self.feed_last_summary[feed_id])
-
-    def _apply_feed_progress(self, feed_id, visible, value, maximum):
-        if not (0 <= feed_id < len(self.feed_progress_bars)):
-            return
-        bar = self.feed_progress_bars[feed_id]
-        bar.setMaximum(max(1, int(maximum)))
-        bar.setValue(max(0, min(int(value), bar.maximum())))
-        bar.setVisible(bool(visible))
 
     def set_res(self, feed_id, text, flag):
         if flag == 'res':
@@ -705,7 +670,6 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
 
     def stop_feed(self, feed_id):
         self.feed_running_flags[feed_id] = False
-        self.feed_progress_bars[feed_id].setVisible(False)
         self.ssl_show.setText(f"画面{feed_id+1}: 已停止")
 
     def stop_all_feeds(self):
@@ -790,14 +754,16 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         self.update_record_count()
         QMessageBox.information(self, "成功", "检测记录已清空!")
 
-    def toggle_enhancement(self, state):
+    def toggle_feed_enhancement(self, feed_id, state):
+        """为特定 feed_id 的 VideoProcessor 切换图像增强"""
         on = state == QtCore.Qt.Checked
-        self.video_processor.enable_enhancement = on
+        vp = self.feed_video_processors[feed_id]
+        vp.enable_enhancement = on
         if on:
-            self.video_processor.set_enhancement_params(
+            vp.set_enhancement_params(
                 brightness=1.42, contrast=1.18, saturation=1.08)
         else:
-            self.video_processor.set_enhancement_params(
+            vp.set_enhancement_params(
                 brightness=1.0, contrast=1.0, saturation=1.0)
         self._save_config()
 
@@ -858,11 +824,16 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
             conf = self.config_manager.get('confidence', 0.45)
             iou = self.config_manager.get('iou', 0.45)
             weights = self.config_manager.get('weights', '')
-            enhancement = self.config_manager.get('enhancement', False)
+            # 恢复每个 feed 的增强设置，支持向后兼容
+            feed_enhancements = self.config_manager.get('feed_enhancements', [False] * 8)
+            if not isinstance(feed_enhancements, list):
+                feed_enhancements = [False] * 8
+            feed_enhancements = (list(feed_enhancements) + [False] * 8)[:8]
             
             self.dsb_conf.setValue(conf)
             self.dsb_iou.setValue(iou)
-            self.cb_enable_enhancement.setChecked(enhancement)
+            for i, checked in enumerate(feed_enhancements):
+                self.feed_enhance_checkboxes[i].setChecked(bool(checked))
             
             if weights and weights in [self.cb_weights.itemText(i) for i in range(self.cb_weights.count())]:
                 self.cb_weights.setCurrentText(weights)
@@ -873,11 +844,12 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
     
     def _save_config(self):
         try:
+            # 保存每个 feed 的增强设置
             self.config_manager.update({
                 'confidence': self.dsb_conf.value(),
                 'iou': self.dsb_iou.value(),
                 'weights': self.cb_weights.currentText(),
-                'enhancement': self.cb_enable_enhancement.isChecked()
+                'feed_enhancements': [cb.isChecked() for cb in self.feed_enhance_checkboxes]
             })
         except Exception as e:
             self.logger.warning(f"参数保存失败: {e}")
@@ -910,7 +882,7 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
             self.statistics_window.activateWindow()
         except Exception as e:
             self.logger.exception(f"打开统计窗口失败: {e}")
-            QMessageBox.critical(self, "错误", f"打开统计窗口���败: {str(e)}")
+            QMessageBox.critical(self, "错误", f"打开统计窗口失败: {str(e)}")
     
     def show_browser(self):
         """显示检测结果浏览器"""
