@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""数据统计图表模块"""
+"""数据统计图表模块 - 支持8个镜头统一统计"""
 import sys
 import warnings
 warnings.filterwarnings('ignore')
 
 from PyQt5 import QtCore, QtGui, QtWidgets
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QLabel, QMessageBox
+from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox, QLabel, QMessageBox, QTabWidget
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont
 
@@ -22,26 +22,20 @@ import matplotlib.pyplot as plt
 class StatisticsPanel(QDialog):
     def __init__(self, post_processor, parent=None):
         super().__init__(parent)
-        print("[StatisticsPanel] 初始化窗口")
-        
         self.post_processor = post_processor
-        self.setWindowTitle("检测数据统计")
-        self.setGeometry(100, 100, 1200, 700)
+        self.setWindowTitle("检测数据统计分析")
+        self.setGeometry(100, 100, 1400, 800)
         self.setWindowFlags(self.windowFlags() | QtCore.Qt.Window)
         
         self.figure = None
         self.canvas = None
+        self.feed_combo = None
         
         self.init_ui()
-        print("[StatisticsPanel] UI初始化完成")
-        
-        # 延迟绘制，确保窗口已经显示
         QTimer.singleShot(100, self.update_charts)
     
     def init_ui(self):
         """初始化UI"""
-        print("[StatisticsPanel] 开始init_ui")
-        
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(10)
@@ -49,6 +43,15 @@ class StatisticsPanel(QDialog):
         # 控制栏
         control_layout = QHBoxLayout()
         
+        # ✅ 镜头选择
+        feed_label = QLabel("数据来源:")
+        self.feed_combo = QComboBox()
+        self.feed_combo.addItem("所有镜头 (统一统计)")
+        for i in range(8):
+            self.feed_combo.addItem(f"画面{i + 1}")
+        self.feed_combo.currentIndexChanged.connect(self.update_charts)
+        
+        # 图表类型选择
         chart_label = QLabel("图表类型:")
         self.chart_combo = QComboBox()
         self.chart_combo.addItems(["柱状图", "饼图", "两个都显示"])
@@ -62,6 +65,9 @@ class StatisticsPanel(QDialog):
         export_btn.clicked.connect(self.export_charts)
         export_btn.setFixedWidth(80)
         
+        control_layout.addWidget(feed_label)
+        control_layout.addWidget(self.feed_combo)
+        control_layout.addSpacing(20)
         control_layout.addWidget(chart_label)
         control_layout.addWidget(self.chart_combo)
         control_layout.addStretch()
@@ -71,30 +77,44 @@ class StatisticsPanel(QDialog):
         main_layout.addLayout(control_layout)
         
         # 创建图表
-        print("[StatisticsPanel] 创建Figure和Canvas")
-        self.figure = Figure(figsize=(12, 6), dpi=100)
+        self.figure = Figure(figsize=(14, 7), dpi=100)
         self.figure.patch.set_facecolor('white')
         self.canvas = FigureCanvas(self.figure)
-        self.canvas.setMinimumHeight(500)
+        self.canvas.setMinimumHeight(600)
         
         main_layout.addWidget(self.canvas, 1)
         self.setLayout(main_layout)
-        print("[StatisticsPanel] init_ui完成")
+    
+    def get_filtered_stats(self):
+        """获取筛选后的统计数据"""
+        detections = self.post_processor.get_detection_history_copy()
+        
+        # 获取选中的镜头
+        feed_text = self.feed_combo.currentText()
+        
+        if feed_text == "所有镜头 (统一统计)":
+            # 合并所有镜头的统计
+            filtered_dets = detections
+        else:
+            # 筛选特定镜头
+            feed_id = int(feed_text.split()[0][2]) - 1  # 从"画面1"提取0
+            filtered_dets = [d for d in detections if d.feed_id == feed_id]
+        
+        # 统计数据
+        stats = {}
+        for det in filtered_dets:
+            stats[det.class_name] = stats.get(det.class_name, 0) + 1
+        
+        return stats, filtered_dets
     
     def update_charts(self):
         """更新图表数据"""
         try:
-            print("[Statistics] 开始update_charts")
+            self.figure.clear()
             
-            # 清空之前的图表
-            if self.figure is not None:
-                self.figure.clear()
-            
-            stats = self.post_processor.get_statistics()
-            print(f"[Statistics] 获取统计数据: {stats}")
+            stats, detections = self.get_filtered_stats()
             
             if not stats or len(stats) == 0:
-                print("[Statistics] 没有数据，显示提示信息")
                 ax = self.figure.add_subplot(111)
                 ax.text(0.5, 0.5, "暂无检测数据", ha='center', va='center', 
                        fontsize=16, color='gray')
@@ -102,43 +122,31 @@ class StatisticsPanel(QDialog):
                 ax.set_ylim(0, 1)
                 ax.axis('off')
                 self.canvas.draw()
-                print("[Statistics] 提示信息已绘制")
                 return
             
-            print(f"[Statistics] 开始绘制图表，类别数: {len(stats)}")
-            
             chart_type = self.chart_combo.currentText()
-            print(f"[Statistics] 图表类型: {chart_type}")
             
             if chart_type == "柱状图":
-                self._draw_bar_chart(stats)
+                self._draw_bar_chart(stats, detections)
             elif chart_type == "饼图":
-                self._draw_pie_chart(stats)
+                self._draw_pie_chart(stats, detections)
             else:
-                self._draw_both_charts(stats)
+                self._draw_both_charts(stats, detections)
             
-            print("[Statistics] 调用tight_layout")
             self.figure.tight_layout()
-            
-            print("[Statistics] 调用canvas.draw()")
             self.canvas.draw()
-            
-            print("[Statistics] 图表绘制完成")
             
         except Exception as e:
             print(f"[Statistics] 错误: {e}")
             import traceback
             traceback.print_exc()
     
-    def _draw_bar_chart(self, stats):
+    def _draw_bar_chart(self, stats, detections):
         """绘制柱状图"""
-        print("[BarChart] 开始绘制柱状图")
         ax = self.figure.add_subplot(111)
         
         classes = list(stats.keys())
         counts = list(stats.values())
-        
-        print(f"[BarChart] 类别: {classes}, 数量: {counts}")
         
         colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#F7DC6F']
         colors = colors * (len(classes) // len(colors) + 1)
@@ -147,7 +155,7 @@ class StatisticsPanel(QDialog):
         bars = ax.bar(classes, counts, color=colors, edgecolor='black', linewidth=1.5, alpha=0.8)
         
         # 添加数值标签
-        for i, (bar, count) in enumerate(zip(bars, counts)):
+        for bar, count in zip(bars, counts):
             height = bar.get_height()
             ax.text(bar.get_x() + bar.get_width()/2., height,
                    f'{int(count)}',
@@ -155,21 +163,16 @@ class StatisticsPanel(QDialog):
         
         ax.set_xlabel('检测类别', fontsize=13, fontweight='bold')
         ax.set_ylabel('检测数量', fontsize=13, fontweight='bold')
-        ax.set_title('各类别检测数量统计', fontsize=15, fontweight='bold', pad=20)
+        ax.set_title(f'各类别检测数量统计 (总计: {len(detections)}条)', fontsize=15, fontweight='bold', pad=20)
         ax.grid(axis='y', alpha=0.3, linestyle='--')
         ax.set_facecolor('#f8f9fa')
-        
-        print("[BarChart] 柱状图绘制完成")
     
-    def _draw_pie_chart(self, stats):
+    def _draw_pie_chart(self, stats, detections):
         """绘制饼图"""
-        print("[PieChart] 开始绘制饼图")
         ax = self.figure.add_subplot(111)
         
         classes = list(stats.keys())
         counts = list(stats.values())
-        
-        print(f"[PieChart] 类别: {classes}, 数量: {counts}")
         
         colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#F7DC6F']
         colors = colors * (len(classes) // len(colors) + 1)
@@ -184,25 +187,19 @@ class StatisticsPanel(QDialog):
             textprops={'fontsize': 11, 'fontweight': 'bold'}
         )
         
-        # 美化百分比文本
         for autotext in autotexts:
             autotext.set_color('white')
             autotext.set_fontweight('bold')
             autotext.set_fontsize(11)
         
-        # 美化标签文本
         for text in texts:
             text.set_fontsize(12)
             text.set_fontweight('bold')
         
-        ax.set_title('各类别检测比例分布', fontsize=15, fontweight='bold', pad=20)
-        
-        print("[PieChart] 饼图绘制完成")
+        ax.set_title(f'各类别检测比例分布 (总计: {len(detections)}条)', fontsize=15, fontweight='bold', pad=20)
     
-    def _draw_both_charts(self, stats):
+    def _draw_both_charts(self, stats, detections):
         """同时绘制柱状图和饼图"""
-        print("[BothCharts] 开始绘制双图表")
-        
         classes = list(stats.keys())
         counts = list(stats.values())
         
@@ -222,7 +219,7 @@ class StatisticsPanel(QDialog):
         
         ax1.set_xlabel('检测类别', fontsize=12, fontweight='bold')
         ax1.set_ylabel('检测数量', fontsize=12, fontweight='bold')
-        ax1.set_title('各类别检测数量', fontsize=13, fontweight='bold')
+        ax1.set_title(f'检测数量 (总计: {len(detections)}条)', fontsize=13, fontweight='bold')
         ax1.grid(axis='y', alpha=0.3, linestyle='--')
         ax1.set_facecolor('#f8f9fa')
         
@@ -246,9 +243,7 @@ class StatisticsPanel(QDialog):
             text.set_fontsize(11)
             text.set_fontweight('bold')
         
-        ax2.set_title('各类别检测比例', fontsize=13, fontweight='bold')
-        
-        print("[BothCharts] 双图表绘制完成")
+        ax2.set_title(f'检测比例', fontsize=13, fontweight='bold')
     
     def export_charts(self):
         """导出图表为图片"""
@@ -262,12 +257,5 @@ class StatisticsPanel(QDialog):
             try:
                 self.figure.savefig(file_path, dpi=300, bbox_inches='tight')
                 QMessageBox.information(self, "成功", f"图表已导出到:\n{file_path}")
-                print(f"[Export] 图表已导出到: {file_path}")
             except Exception as e:
                 QMessageBox.critical(self, "错误", f"导出失败: {str(e)}")
-                print(f"[Export] 导出失败: {e}")
-    
-    def closeEvent(self, event):
-        """关闭窗口（保留资源以供复用）"""
-        print("[StatisticsPanel] 窗口关闭")
-        super().closeEvent(event)
