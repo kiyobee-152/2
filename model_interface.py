@@ -91,7 +91,7 @@ class BaseDetector(ABC):
         auto=False 表示不自动调整填充方向，始终在右下方填充。
         
         Args:
-            image: 输入图像
+            image: ���入图像
             
         Returns:
             处理后的图像, 缩放比例, 填充大小
@@ -140,7 +140,7 @@ class BaseDetector(ABC):
             img: 目标图像
             box: 边界框坐标 [x1, y1, x2, y2]
             label: 标签文字（如 "bolt, 0.92"）
-            line_width: 边框线宽，None 则根据图像尺寸自适应计算
+            line_width: 边框线宽，None 则��据图像尺寸自适应计算
             box_color: 检测框颜色，BGR 格式，默认蓝色 (255, 0, 0)
             txt_box_color: 标签背景色，默认浅灰色
             txt_color: 标签文字颜色，默认白色
@@ -251,16 +251,24 @@ class YOLOv5ONNXDetector(BaseDetector):
         
         # 如果构造时未提供类别名称列表，则尝试自动加载
         # 约定：class_names.txt 与模型文件放在同一目录下
-        # 本项目中 class_names.txt 的内容为：
-        #   bolt    （锚杆/螺栓）
-        #   bulk    （散料/块状物）
+        # ✅ 修改：支持新的3类模型
         if not self.names:
             import os
             names_file = os.path.join(os.path.dirname(self.weights), 'class_names.txt')
             if os.path.exists(names_file):
                 with open(names_file, 'r', encoding='utf-8') as f:
                     # 去除末尾换行符后按行分割，得到类别名称列表
-                    self.names = f.read().rstrip('\n').split('\n')
+                    lines = f.read().rstrip('\n').split('\n')
+                    # 过滤空行
+                    self.names = [line.strip() for line in lines if line.strip()]
+            else:
+                print(f"⚠️ 警告: 未找到 class_names.txt，路径: {names_file}")
+                # ✅ 默认使用新的3个类别
+                self.names = ['Other_garbage', 'bolt', 'large_sized_coal']
+        
+        # ✅ 调试输出：检查加载的类别
+        print(f"✅ 已加载类别: {self.names}")
+        print(f"✅ 类别数量: {len(self.names)}")
         
         # 模型预热（Warm up）：用一张 300×300 的全零黑色图像做一次完整推理
         # 目的是让 ONNX Runtime 提前完成图优化、内存分配等初始化操作，
@@ -296,7 +304,7 @@ class YOLOv5ONNXDetector(BaseDetector):
         # 返回值：img=缩放填充后的图像, ratio=缩放比例, pad=填充的像素数
         img, ratio, pad = self.preprocess(image)
         # 通道转换：
-        #   transpose((2,0,1)) 将 HWC（高×宽×通道）转为 CHW（通道×高×宽），这是 PyTorch/ONNX 的标���格式
+        #   transpose((2,0,1)) 将 HWC（高×宽×通道）转为 CHW（通道×高×宽），这是 PyTorch/ONNX 的标准格式
         #   [::-1] 将 BGR 通道顺序反转为 RGB（OpenCV 默认 BGR，而模型训练时使用 RGB）
         img = img.transpose((2, 0, 1))[::-1]  # HWC转CHW，BGR转RGB
         # 确保数组在内存中是连续存储的（transpose 和切片可能产生不连续的视图）
@@ -353,9 +361,15 @@ class YOLOv5ONNXDetector(BaseDetector):
                 for *xyxy, conf, cls in reversed(det):
                     # 将 xyxy 坐标从列表转为一维张量，便于通过索引取值
                     xyxy = (torch.tensor(xyxy).view(1, 4)).view(-1)
-                    # 根据类别 ID 查找类别名称
-                    # 如果 ID 超出 names 列表范围（防御性编程），则使用 "class_N" 格式
-                    cls_name = self.names[int(cls)] if int(cls) < len(self.names) else f"class_{int(cls)}"
+                    # ✅ 修改：更好的类别映射，避免 class_2 问题
+                    cls_id = int(cls)
+                    if cls_id < len(self.names):
+                        cls_name = self.names[cls_id]
+                    else:
+                        # ⚠️ 类别ID超出范围 - 这表示 class_names.txt 没有正确加载
+                        print(f"⚠️ 警告: 类别ID {cls_id} 超出范围 (只有 {len(self.names)} 个类别)")
+                        cls_name = f"Unknown_class_{cls_id}"
+                    
                     # 将当前检测框的完整信息组装为列表并追加到结果列表
                     # 格式：[类别名称, 置信度(保留2位小数), 左上角x, 左上角y, 右下角x, 右下角y]
                     result_list.append([
