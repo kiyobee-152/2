@@ -556,16 +556,19 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
             self.inference_times.append(infer_time)
             self.frame_timestamps.append(time.time())
             
+            # ✅ 修改：只统计需要报警的类别（large_sized_coal 不需要报警）
             if result_lists:
                 rd = {}
                 for result in result_lists:
                     name = result[0]
-                    rd[name] = rd.get(name, 0) + 1
-                self.feed_last_alarm_dict[feed_id] = rd
+                    # large_sized_coal 是正常物体，不计入报警
+                    if name != 'large_sized_coal':
+                        rd[name] = rd.get(name, 0) + 1
+                self.feed_last_alarm_dict[feed_id] = rd if rd else None
             else:
                 self.feed_last_alarm_dict[feed_id] = None
             
-            # ✅ 传入 feed_id
+            # 传入 feed_id
             self.post_processor.add_detection(result_lists, frame_id=self.feed_current_frame_id[feed_id],
                                              feed_id=feed_id)
             self.feed_latest_frames[feed_id] = frame.copy()
@@ -630,8 +633,20 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
                 panel['picture'].setPixmap(QPixmap.fromImage(img))
 
     def _draw_alarm_banner_bgr(self, frame_bgr, result_dict):
+        """
+        绘制检测结果报警横幅
+        ✅ 修改：自动过滤 'large_sized_coal'，不显示报警
+        """
         if not result_dict:
             return frame_bgr
+        
+        # ✅ 过滤不需要报警的类别
+        alert_dict = {k: v for k, v in result_dict.items() if k != 'large_sized_coal'}
+        
+        # 如果没有需要报警的类别，直接返回（不绘制横幅）
+        if not alert_dict:
+            return frame_bgr
+        
         h, w = frame_bgr.shape[:2]
         bar_h = max(18, int(round(h * 0.088)))
         font_scale = max(0.28, min(1.55, h * 0.00115))
@@ -642,8 +657,8 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         text_y = max(int(font_scale * 15 + 4), min(h - 1, int(bar_h * 0.72)))
 
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-        summary = ", ".join([f"{k}:{v}" for k, v in result_dict.items()])
-        alarm_text = f"{timestamp} ALARM: {summary}"[:200]
+        summary = ", ".join([f"{k}:{v}" for k, v in alert_dict.items()])
+        alarm_text = f"{timestamp} ALERT: {summary}"[:200]
         face = cv2.FONT_HERSHEY_SIMPLEX
         while len(alarm_text) > 1:
             tw, _ = cv2.getTextSize(alarm_text, face, font_scale, thickness)[0]
