@@ -114,6 +114,12 @@ class Yolov5OnnxruntimeDet(object):
         # 模型输入尺寸: YOLOv5 训练时使用的固定分辨率
         # letterbox 预处理会将任意尺寸的图像缩放填充到此尺寸
         self.img_size = (640, 640)  # 训练权重的传入尺寸
+        # 检测框颜色映射（BGR）
+        self.class_color_map = {
+            'bolt': (0, 0, 255),                # 红色
+            'large_sized_coal': (0, 255, 255),  # 黄色
+            'Other_garbage': (255, 0, 0),       # 蓝色
+        }
         # ---- 设备与推理后端选择 ----
         # 检测当前环境是否有 NVIDIA GPU 且安装了 CUDA 版 PyTorch
         cuda = torch.cuda.is_available()
@@ -316,10 +322,18 @@ class Yolov5OnnxruntimeDet(object):
             return opencv_img
         # 逐个绘制每个检测结果
         for result in result_list:
+            class_name = result[0]
             # 标签文字格式: "类别名,置信度", 如 "bolt,0.92"
-            label_text = result[0] + ',' + str(result[1])
+            label_text = class_name + ',' + str(result[1])
+            box_color = self.class_color_map.get(class_name, (255, 0, 0))
             # 调用私有方法绘制单个框, 传入坐标 [x1,y1,x2,y2] 和标签
-            opencv_img = self.__draw_image(opencv_img, [result[2], result[3], result[4], result[5]], label_text)
+            opencv_img = self.__draw_image(
+                opencv_img,
+                [result[2], result[3], result[4], result[5]],
+                label_text,
+                class_name=class_name,
+                box_color=box_color
+            )
         return opencv_img
 
     # =========================================================================
@@ -350,7 +364,7 @@ class Yolov5OnnxruntimeDet(object):
     #
     # Returns:
     #   opencv_img: 绘制后的图像
-    def __draw_image(self, opencv_img, box, label='', line_width=None, box_color=(255, 0, 0),
+    def __draw_image(self, opencv_img, box, label='', class_name='', line_width=None, box_color=None,
                      txt_box_color=(200, 200, 200),
                      txt_color=(255, 255, 255)):
         '''
@@ -359,6 +373,7 @@ class Yolov5OnnxruntimeDet(object):
             opencv_img:
             box: [xmin,ymin,xmax,ymax]
             label: text,not support chinese
+            class_name: class name for color mapping
             line_width: None
             box_color:
             txt_box_color:
@@ -369,6 +384,8 @@ class Yolov5OnnxruntimeDet(object):
         # 自适应线宽: 根据图像尺寸自动计算, 大图粗线小图细线
         # sum(shape) ≈ 高+宽+通道, 乘 0.003 再取整, 最小为 2
         lw = line_width or max(round(sum(opencv_img.shape) / 2 * 0.003), 2)  # line width
+        if box_color is None:
+            box_color = self.class_color_map.get(class_name, (255, 0, 0))
         # 左上角 p1 和右下角 p2 (OpenCV 绘图函数需要的格式)
         p1, p2 = (int(box[0]), int(box[1])), (int(box[2]), int(box[3]))
         # 绘制检测框矩形; LINE_AA = 抗锯齿, 线条更平滑
