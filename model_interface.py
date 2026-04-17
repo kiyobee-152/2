@@ -128,14 +128,12 @@ class BaseDetector(ABC):
             class_name = result[0]
             # 拼接标签文字，格式如 "bolt, 0.92"
             label_text = f"{class_name}, {result[1]:.2f}"
-            box_color = self.class_color_map.get(class_name, (255, 0, 0))
             # 调用内部方法绘制单个检测框
             # result[2:6] 分别为 x1, y1, x2, y2（左上角和右下角坐标）
             opencv_img = self._draw_box(opencv_img, 
                                         [result[2], result[3], result[4], result[5]], 
                                         label_text,
-                                        class_name=class_name,
-                                        box_color=box_color)
+                                        class_name=class_name)
         return opencv_img
     
     def _draw_box(self, img: np.ndarray, box: List[int], label: str = '',

@@ -325,14 +325,12 @@ class Yolov5OnnxruntimeDet(object):
             class_name = result[0]
             # 标签文字格式: "类别名,置信度", 如 "bolt,0.92"
             label_text = class_name + ',' + str(result[1])
-            box_color = self.class_color_map.get(class_name, (255, 0, 0))
             # 调用私有方法绘制单个框, 传入坐标 [x1,y1,x2,y2] 和标签
             opencv_img = self.__draw_image(
                 opencv_img,
                 [result[2], result[3], result[4], result[5]],
                 label_text,
-                class_name=class_name,
-                box_color=box_color
+                class_name=class_name
             )
         return opencv_img
 
