@@ -68,6 +68,31 @@ import torch
 
 
 # =============================================================================
+# 颜色映射定义 - ✅ 新增
+# =============================================================================
+CLASS_COLORS = {
+    'bolt': (0, 0, 255),              # 红色 - 锚杆
+    'large_sized_coal': (0, 255, 255),  # 黄色 - 大块煤
+    'Other_garbage': (255, 0, 0),     # 蓝色 - 其他垃圾
+}
+
+DEFAULT_BOX_COLOR = (0, 165, 255)    # 橙色 - 默认颜色（用于未定义的类别）
+
+
+def get_box_color(class_name):
+    """
+    根据类别名称获取对应的检测框颜色
+    
+    Args:
+        class_name: 类别名称（如 'bolt', 'large_sized_coal', 'Other_garbage'）
+        
+    Returns:
+        BGR 颜色值元组 (B, G, R)
+    """
+    return CLASS_COLORS.get(class_name, DEFAULT_BOX_COLOR)
+
+
+# =============================================================================
 # Yolov5OnnxruntimeDet — YOLOv5 ONNX Runtime 检测器类
 # =============================================================================
 # 封装了 YOLOv5 模型基于 ONNX Runtime 的完整推理流程。
@@ -202,7 +227,7 @@ class Yolov5OnnxruntimeDet(object):
     #   list[ [name, conf, x1, y1, x2, y2], ... ] (原图坐标空间)
     #
     # Args:
-    #   image: 原始输入图像, numpy 数组, HWC 格式, BGR 色彩, uint8, 任意尺��
+    #   image: 原始输入图像, numpy 数组, HWC 格式, BGR 色彩, uint8, 任意尺寸
     #
     # Returns:
     #   result_list: 检测结果列表, 每个元素为:
@@ -226,7 +251,7 @@ class Yolov5OnnxruntimeDet(object):
         # [::-1] 切片产生非连续内存视图 (stride 为负),
         # torch.from_numpy 要求内存必须连续, 故需要 ascontiguousarray
         img = np.ascontiguousarray(img)
-        # ---- ④ 转为 PyTorch 张量并放置到设备 ----
+        # ---- ④ 转为 PyTorch 张量并放置到���备 ----
         # from_numpy: numpy → torch.Tensor
         # .to(self.device): 放到 GPU 或 CPU
         img = torch.from_numpy(img).to(self.device)
@@ -316,10 +341,13 @@ class Yolov5OnnxruntimeDet(object):
             return opencv_img
         # 逐个绘制每个检测结果
         for result in result_list:
+            class_name = result[0]
             # 标签文字格式: "类别名,置信度", 如 "bolt,0.92"
-            label_text = result[0] + ',' + str(result[1])
-            # 调用私有方法绘制单个框, 传入坐标 [x1,y1,x2,y2] 和标签
-            opencv_img = self.__draw_image(opencv_img, [result[2], result[3], result[4], result[5]], label_text)
+            label_text = class_name + ',' + str(result[1])
+            # ✅ 根据类别获取对应颜色
+            box_color = get_box_color(class_name)
+            # 调用私有方法绘制单个框, 传入坐标 [x1,y1,x2,y2] 和标签，以及颜色
+            opencv_img = self.__draw_image(opencv_img, [result[2], result[3], result[4], result[5]], label_text, box_color=box_color)
         return opencv_img
 
     # =========================================================================
@@ -374,7 +402,7 @@ class Yolov5OnnxruntimeDet(object):
         # 绘制检测框矩形; LINE_AA = 抗锯齿, 线条更平滑
         cv2.rectangle(opencv_img, p1, p2, box_color, thickness=lw, lineType=cv2.LINE_AA)
         if label:
-            # 字体线宽: 比���线宽少 1, 最小为 1
+            # 字体线宽: 比框线宽少 1, 最小为 1
             tf = max(lw - 1, 1)  # font thickness
             # 计算标签文字渲染后的像素宽高
             # font=0 即 FONT_HERSHEY_SIMPLEX; fontScale=lw/3 随图像大小自适应
@@ -403,7 +431,7 @@ class Yolov5OnnxruntimeDet(object):
     #
     # Args:
     #   result_list: inference_image() 的返回值
-    #   opencv_img: 原始图像
+    #   opencv_img: ���始图像
     def imshow(self, result_list, opencv_img):
         # 有检测结果时先绘制框
         if len(result_list) > 0:
@@ -497,7 +525,7 @@ class Yolov5OnnxruntimeDet(object):
 if __name__ == '__main__':
     # 创建检测器实例, 指定 ONNX 模型路径
     detector = Yolov5OnnxruntimeDet(weights=r'E:\ai\yolov5-6.0\pre-model\yolov5s.onnx')
-    # 加��类别名称文件 (覆盖 __init__ 中默认加载的名称)
+    # 加载类别名称文件 (覆盖 __init__ 中默认加载的名称)
     detector.load_labels(r'E:\official-model\yolov8\labels.txt')
     # detector.start_video(r'D:\car.mp4')  # 取消注释可测试视频检测
     # 读取测试图片
