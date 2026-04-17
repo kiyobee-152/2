@@ -23,7 +23,33 @@ from abc import ABC, abstractmethod
 import numpy as np
 import cv2
 # List, Tuple, Optional: 类型提示工具，增强代码可读性和 IDE 自动补全
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
+
+
+# =============================================================================
+# 颜色映射定义
+# =============================================================================
+# ✅ 新增：类别颜色映射（BGR 格式）
+CLASS_COLORS = {
+    'bolt': (0, 0, 255),              # 红色 - 锚杆
+    'large_sized_coal': (0, 255, 255),  # 黄色 - 大块煤
+    'Other_garbage': (255, 0, 0),     # 蓝色 - 其他垃圾
+}
+
+DEFAULT_BOX_COLOR = (0, 165, 255)    # 橙色 - 默认颜色（用于未定义的类别）
+
+
+def get_box_color(class_name: str) -> Tuple[int, int, int]:
+    """
+    根据类别名称获取对应的检测框颜色
+    
+    Args:
+        class_name: 类别名称（如 'bolt', 'large_sized_coal', 'Other_garbage'）
+        
+    Returns:
+        BGR 颜色值元组 (B, G, R)
+    """
+    return CLASS_COLORS.get(class_name, DEFAULT_BOX_COLOR)
 
 
 # =============================================================================
@@ -117,15 +143,19 @@ class BaseDetector(ABC):
         if len(result_list) == 0:
             return opencv_img
         
-        # 遍历每一条检测结果
+        # 遍历每一���检测结果
         for result in result_list:
+            class_name = result[0]
             # 拼接标签文字，格式如 "bolt, 0.92"
-            label_text = f"{result[0]}, {result[1]:.2f}"
+            label_text = f"{class_name}, {result[1]:.2f}"
+            # ✅ 根据类别获取对应颜色
+            box_color = get_box_color(class_name)
             # 调用内部方法绘制单个检测框
             # result[2:6] 分别为 x1, y1, x2, y2（左上角和右下角坐标）
             opencv_img = self._draw_box(opencv_img, 
                                        [result[2], result[3], result[4], result[5]], 
-                                       label_text)
+                                       label_text,
+                                       box_color=box_color)
         return opencv_img
     
     def _draw_box(self, img: np.ndarray, box: List[int], label: str = '', 
@@ -140,7 +170,7 @@ class BaseDetector(ABC):
             img: 目标图像
             box: 边界框坐标 [x1, y1, x2, y2]
             label: 标签文字（如 "bolt, 0.92"）
-            line_width: 边框线宽，None 则��据图像尺寸自适应计算
+            line_width: 边框线宽，None 则根据图像尺寸自适应计算
             box_color: 检测框颜色，BGR 格式，默认蓝色 (255, 0, 0)
             txt_box_color: 标签背景色，默认浅灰色
             txt_color: 标签文字颜色，默认白色
@@ -317,7 +347,7 @@ class YOLOv5ONNXDetector(BaseDetector):
         # 归一化：像素值从 [0, 255] 缩放到 [0.0, 1.0]，这是 YOLOv5 模型的输入要求
         img /= 255
         # 增加 batch 维度：从 [C, H, W] 变为 [1, C, H, W]
-        # ONNX 模型的输入要求是 4 维张量（batch_size, channels, height, width）
+        # ONNX 模型的输入���求是 4 维张量（batch_size, channels, height, width）
         if len(img.shape) == 3:
             img = img[None]
         
