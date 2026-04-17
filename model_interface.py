@@ -58,6 +58,12 @@ class BaseDetector(ABC):
         self.iou = iou_thres
         # YOLOv5 模型的标准输入尺寸，图像在送入模型前会被缩放到此尺寸
         self.img_size = (640, 640)  # 默认输入尺寸
+        # 检测框颜色映射（BGR）
+        self.class_color_map = {
+            'bolt': (0, 0, 255),                # 红色
+            'large_sized_coal': (0, 255, 255),  # 黄色
+            'Other_garbage': (255, 0, 0),       # 蓝色
+        }
     
     # ---- 抽象方法：子类必须实现 ----
         
@@ -119,18 +125,21 @@ class BaseDetector(ABC):
         
         # 遍历每一条检测结果
         for result in result_list:
+            class_name = result[0]
             # 拼接标签文字，格式如 "bolt, 0.92"
-            label_text = f"{result[0]}, {result[1]:.2f}"
+            label_text = f"{class_name}, {result[1]:.2f}"
             # 调用内部方法绘制单个检测框
             # result[2:6] 分别为 x1, y1, x2, y2（左上角和右下角坐标）
             opencv_img = self._draw_box(opencv_img, 
-                                       [result[2], result[3], result[4], result[5]], 
-                                       label_text)
+                                        [result[2], result[3], result[4], result[5]], 
+                                        label_text,
+                                        class_name=class_name)
         return opencv_img
     
-    def _draw_box(self, img: np.ndarray, box: List[int], label: str = '', 
+    def _draw_box(self, img: np.ndarray, box: List[int], label: str = '',
+                  class_name: str = '',
                   line_width: Optional[int] = None, 
-                  box_color: Tuple[int, int, int] = (255, 0, 0),
+                  box_color: Optional[Tuple[int, int, int]] = None,
                   txt_box_color: Tuple[int, int, int] = (200, 200, 200),
                   txt_color: Tuple[int, int, int] = (255, 255, 255)) -> np.ndarray:
         """
@@ -140,8 +149,9 @@ class BaseDetector(ABC):
             img: 目标图像
             box: 边界框坐标 [x1, y1, x2, y2]
             label: 标签文字（如 "bolt, 0.92"）
+            class_name: 类别名称，用于查询颜色映射
             line_width: 边框线宽，None 则��据图像尺寸自适应计算
-            box_color: 检测框颜色，BGR 格式，默认蓝色 (255, 0, 0)
+            box_color: 检测框颜色，BGR 格式，None 时按 class_name 自动映射
             txt_box_color: 标签背景色，默认浅灰色
             txt_color: 标签文字颜色，默认白色
             
@@ -151,6 +161,8 @@ class BaseDetector(ABC):
         # 自适应线宽：根据图像尺寸计算，确保在不同分辨率下检测框都清晰可见
         # sum(img.shape) 为 高+宽+通道数 之和，乘以 0.003 再除以 2 得到合理线宽
         lw = line_width or max(round(sum(img.shape) / 2 * 0.003), 2)
+        if box_color is None:
+            box_color = self.class_color_map.get(class_name, (255, 0, 0))
         # p1: 左上角坐标, p2: 右下角坐标
         p1, p2 = (int(box[0]), int(box[1])), (int(box[2]), int(box[3]))
         # 绘制矩形检测框，使用抗锯齿 LINE_AA 模式
