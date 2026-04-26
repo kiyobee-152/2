@@ -342,16 +342,26 @@ class Ui_MainWindow(QtWidgets.QMainWindow):
         self.statusbar.addWidget(self.statusLabel)
         self.statusbar.addWidget(self.ssl_show)
 
+        # ✅ 修改：扩大状态栏指标框的宽度
         self.lbl_fps = QLabel("FPS: 0.0")
-        self.lbl_fps.setFixedWidth(100)
+        self.lbl_fps.setFixedWidth(150)  # 从 100 增加到 130
+        self.lbl_fps.setMinimumWidth(150)
+        
         self.lbl_infer_time = QLabel("推理: 0ms")
-        self.lbl_infer_time.setFixedWidth(100)
+        self.lbl_infer_time.setFixedWidth(150)  # 从 100 增加到 140
+        self.lbl_infer_time.setMinimumWidth(150)
+        
         self.lbl_cpu = QLabel("CPU: 0%")
-        self.lbl_cpu.setFixedWidth(100)
+        self.lbl_cpu.setFixedWidth(150)  # 从 100 增加到 130
+        self.lbl_cpu.setMinimumWidth(150)
+        
         self.lbl_mem = QLabel("内存: 0%")
-        self.lbl_mem.setFixedWidth(100)
+        self.lbl_mem.setFixedWidth(150)  # 从 100 增加到 140
+        self.lbl_mem.setMinimumWidth(150)
+        
         self.lbl_gpu = QLabel("GPU: 0%")
-        self.lbl_gpu.setFixedWidth(100)
+        self.lbl_gpu.setFixedWidth(150)  # 从 100 增加到 130
+        self.lbl_gpu.setMinimumWidth(150)
 
         self.statusbar.addWidget(self.lbl_fps)
         self.statusbar.addWidget(self.lbl_infer_time)
